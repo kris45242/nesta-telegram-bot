@@ -6,7 +6,7 @@ from aiogram.utils.markdown import hbold
 import asyncio
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MANAGER_CHAT_ID = 0
+MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID", "0"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
