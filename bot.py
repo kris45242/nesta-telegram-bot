@@ -1,117 +1,89 @@
 import os
-import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.types import (
     Message,
+    KeyboardButton,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    Contact
 )
+from aiogram.enums import ChatType
+from aiogram.filters import CommandStart
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
+import asyncio
 
-# ================= НАСТРОЙКИ =================
-
+# ===== ENV =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID"))
 
+# ===== INIT =====
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= КНОПКА КОНТАКТА =================
-
+# ===== КНОПКА КОНТАКТА =====
 contact_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📞 Передать номер менеджеру", request_contact=True)]
+        [KeyboardButton(
+            text="📞 Оставить номер телефона",
+            request_contact=True
+        )]
     ],
     resize_keyboard=True,
     one_time_keyboard=True
 )
 
-# ================= КЛИЕНТ → МЕНЕДЖЕРЫ =================
-
-@dp.message()
-async def from_client(message: Message):
-    # игнорируем сообщения от бота
-    if message.from_user.is_bot:
-        return
-
-    # работаем ТОЛЬКО с личкой
-    if message.chat.type != "private":
-        return
-
-    text = (
-        "👤 Новый клиент\n"
-        f"ID: {message.from_user.id}\n"
-        f"Имя: {message.from_user.full_name}\n\n"
-        f"{message.text}"
-    )
-
-    # отправляем в группу менеджеров
-    await bot.send_message(MANAGER_CHAT_ID, text)
-
-    # предлагаем оставить контакт
+# ===== /start =====
+@dp.message(CommandStart(), ChatType.PRIVATE)
+async def start(message: Message):
     await message.answer(
         "Если удобно, оставьте номер телефона — менеджер свяжется с вами напрямую 👇",
         reply_markup=contact_kb
     )
 
-# ================= ПРИЁМ КОНТАКТА =================
-
-@dp.message()
+# ===== ПОЛУЧЕНИЕ КОНТАКТА =====
+@dp.message(lambda m: m.contact is not None, ChatType.PRIVATE)
 async def handle_contact(message: Message):
-    if not message.contact:
-        return
+    contact: Contact = message.contact
 
     text = (
-        "📞 Клиент отправил контакт\n"
-        f"Имя: {message.contact.first_name}\n"
-        f"Телефон: {message.contact.phone_number}\n"
-        f"User ID: {message.from_user.id}"
+        "📞 <b>Клиент оставил контакт</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"🆔 <code>{contact.user_id}</code>\n"
+        f"👤 Имя: <b>{contact.first_name}</b>\n"
+        f"📱 Телефон: <code>{contact.phone_number}</code>"
     )
 
-    await bot.send_message(MANAGER_CHAT_ID, text)
+    await bot.send_message(
+        MANAGER_CHAT_ID,
+        text,
+        parse_mode="HTML"
+    )
 
     await message.answer(
-        "Спасибо! Менеджер скоро свяжется с вами 🙌",
+        "✅ <b>Спасибо!</b>\n\n"
+        "Менеджер получил ваш номер и свяжется с вами в ближайшее время 🙌",
+        parse_mode="HTML",
         reply_markup=None
     )
 
-# ================= МЕНЕДЖЕР → КЛИЕНТ (REPLY) =================
+# ===== СООБЩЕНИЯ ОТ КЛИЕНТА → МЕНЕДЖЕРАМ =====
+@dp.message(ChatType.PRIVATE)
+async def from_client(message: Message):
+    text = (
+        "👤 <b>Новый клиент</b>\n"
+        "━━━━━━━━━━━━\n"
+        f"🆔 <code>{message.from_user.id}</code>\n"
+        f"👤 Имя: <b>{message.from_user.full_name}</b>\n\n"
+        "💬 <b>Сообщение:</b>\n"
+        f"{message.text}"
+    )
 
-@dp.message()
-async def from_manager(message: Message):
-    # игнорируем сообщения от бота
-    if message.from_user.is_bot:
-        return
+    await bot.send_message(
+        MANAGER_CHAT_ID,
+        text,
+        parse_mode="HTML"
+    )
 
-    # работаем ТОЛЬКО в группе менеджеров
-    if message.chat.id != MANAGER_CHAT_ID:
-        return
-
-    # ответ ТОЛЬКО через Reply
-    if not message.reply_to_message:
-        return
-
-    try:
-        original_text = message.reply_to_message.text or ""
-        client_id = None
-
-        for line in original_text.split("\n"):
-            if line.startswith("ID:"):
-                client_id = int(line.replace("ID:", "").strip())
-                break
-
-        if not client_id:
-            return
-
-        await bot.send_message(
-            client_id,
-            f"💬 Ответ менеджера:\n{message.text}"
-        )
-
-    except Exception:
-        await message.reply("❌ Ответьте через Reply на сообщение клиента")
-
-# ================= ЗАПУСК =================
-
+# ===== ЗАПУСК =====
 async def main():
     await dp.start_polling(bot)
 
