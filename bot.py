@@ -1,10 +1,14 @@
 import os
-import re
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from aiogram.enums import ChatType
-from aiogram.filters import CommandStart
 from aiogram.utils.markdown import hbold
+from aiogram.filters import CommandStart
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID"))
@@ -12,85 +16,87 @@ MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID"))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# 🧠 храним связь: message_id в группе → client_id
-MESSAGE_CLIENT_MAP = {}
+# временное хранилище: manager_id -> client_id
+WAITING_REPLY = {}
 
 
-# ===== КНОПКА ОТПРАВКИ ТЕЛЕФОНА =====
-phone_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="📞 Оставить номер", request_contact=True)]],
-    resize_keyboard=True,
-    one_time_keyboard=True
-)
+# ---------- КЛИЕНТ → МЕНЕДЖЕРЫ ----------
+@dp.message(F.chat.type == ChatType.PRIVATE)
+async def from_client(message: Message):
+    client_id = message.from_user.id
+    name = message.from_user.full_name
+
+    text = (
+        f"👤 <b>Новый клиент</b>\n"
+        f"🆔 ID: <code>{client_id}</code>\n"
+        f"👤 Имя: {name}\n\n"
+        f"💬 <b>Сообщение:</b>\n{message.text}"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✍️ Ответить клиенту",
+                    callback_data=f"reply:{client_id}"
+                )
+            ]
+        ]
+    )
+
+    await bot.send_message(
+        MANAGER_CHAT_ID,
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
 
 
-# ===== START =====
+# ---------- НАЖАТИЕ КНОПКИ ----------
+@dp.callback_query(F.data.startswith("reply:"))
+async def start_reply(callback: CallbackQuery):
+    client_id = int(callback.data.split(":")[1])
+    manager_id = callback.from_user.id
+
+    WAITING_REPLY[manager_id] = client_id
+
+    await callback.answer()
+
+    await bot.send_message(
+        manager_id,
+        f"✍️ Напишите ответ клиенту\n"
+        f"🆔 ID: <code>{client_id}</code>",
+        parse_mode="HTML"
+    )
+
+
+# ---------- СООБЩЕНИЕ МЕНЕДЖЕРА → КЛИЕНТ ----------
+@dp.message()
+async def manager_reply(message: Message):
+    manager_id = message.from_user.id
+
+    if manager_id not in WAITING_REPLY:
+        return
+
+    client_id = WAITING_REPLY.pop(manager_id)
+
+    await bot.send_message(
+        client_id,
+        f"💬 <b>Ответ менеджера:</b>\n\n{message.text}",
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Ответ отправлен клиенту")
+
+
+# ---------- START ----------
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
-        "Здравствуйте 👋\n"
-        "Напишите ваш вопрос — менеджер скоро ответит.\n\n"
-        "Если удобно, оставьте номер телефона 👇",
-        reply_markup=phone_kb
+        "Здравствуйте!\n"
+        "Напишите ваш вопрос — менеджер ответит вам 💬"
     )
-
-
-# ===== ПОЛУЧЕНИЕ КОНТАКТА =====
-@dp.message(F.contact)
-async def contact_handler(message: Message):
-    contact = message.contact
-    await bot.send_message(
-        MANAGER_CHAT_ID,
-        f"📞 <b>Контакт клиента</b>\n"
-        f"🆔 <code>{message.from_user.id}</code>\n"
-        f"👤 {contact.first_name}\n"
-        f"📱 {contact.phone_number}",
-        parse_mode="HTML"
-    )
-    await message.answer("Спасибо! Менеджер свяжется с вами 🙌")
-
-
-# ===== КЛИЕНТ → МЕНЕДЖЕРЫ =====
-@dp.message(F.chat.type == ChatType.PRIVATE)
-async def from_client(message: Message):
-    text = (
-        f"👤 <b>Новый клиент</b>\n"
-        f"🆔 <code>{message.from_user.id}</code>\n"
-        f"Имя: {message.from_user.full_name}\n\n"
-        f"{message.text}"
-    )
-
-    sent = await bot.send_message(
-        MANAGER_CHAT_ID,
-        text,
-        parse_mode="HTML"
-    )
-
-    # сохраняем связь message_id → client_id
-    MESSAGE_CLIENT_MAP[sent.message_id] = message.from_user.id
-
-
-# ===== МЕНЕДЖЕР → КЛИЕНТ (REPLY) =====
-@dp.message(F.chat.id == MANAGER_CHAT_ID, F.reply_to_message)
-async def reply_from_manager(message: Message):
-    replied_id = message.reply_to_message.message_id
-
-    if replied_id not in MESSAGE_CLIENT_MAP:
-        await message.reply("❌ Ответьте реплаем на сообщение клиента.")
-        return
-
-    client_id = MESSAGE_CLIENT_MAP[replied_id]
-
-    try:
-        await bot.send_message(
-            client_id,
-            f"💬 <b>Ответ менеджера:</b>\n\n{message.text}",
-            parse_mode="HTML"
-        )
-    except Exception:
-        await message.reply("❌ Клиент недоступен или заблокировал бота.")
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(dp.start_polling(bot))
+    dp.run_polling(bot)
