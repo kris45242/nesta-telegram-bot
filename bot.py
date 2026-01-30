@@ -11,6 +11,10 @@ MANAGER_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID = 0
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+# DEBUG: временно выводим chat.id в логи
+@dp.message()
+async def debug(message: Message):
+    print("CHAT ID:", message.chat.id)
 
 # Клиент → менеджеры
 @dp.message(F.chat.type == ChatType.PRIVATE)
